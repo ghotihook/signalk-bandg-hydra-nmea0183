@@ -83,7 +83,7 @@ transmit rate is the first thing to reduce.
 | Destination port | `1183` | Destination port |
 | TCP connect timeout (s) | `5` | TCP only. Stops a destination that silently drops packets from stalling for the OS timeout (~2 min) before retrying |
 | Transmit rate (Hz) | `1` | How often sentences are sent |
-| Maximum position age (s) | `10` | Past this age the fix is treated as stale and sentences go out flagged invalid (status `V`). `0` disables the check |
+| Maximum position age (s) | `10` | Past this age the fix is treated as stale and nothing is sent at all. `0` disables the check |
 | Destination waypoint label | `WPT` | Fills the 4-character waypoint identifier field in RMB and APA. Clear it to leave the field empty |
 | Send RMC | `true` | Position, SOG, COG, date, variation |
 | Send RMB | `true` | Active waypoint navigation |
@@ -219,13 +219,15 @@ magnetic variation no decimal place at all, so 1° is the available resolution f
 revisit:* if your instrument accepts extended precision, `ddmm()` and `deg3()` in `index.js` are
 the two places to widen.
 
-**Stale positions are flagged, not hidden.** Signal K serves the last known `navigation.position`
+**A stale position stops transmission.** Signal K serves the last known `navigation.position`
 indefinitely — if the GPS loses lock or its source dies, the data model keeps returning a frozen
-fix with nothing to mark it old. Sending that with status `A` would have the processor navigate
-on it. So the position's timestamp is checked each cycle, and once it exceeds *Maximum position
-age* the RMC, RMB, APA and XTE sentences are still sent but with status `V`, which tells the
-processor to discard them. The status line turns red and reports the age. Sources that publish no
-timestamp can't be judged and are treated as current.
+fix with nothing to mark it old, and the processor would navigate on it. So the position's
+timestamp is checked each cycle, and once it exceeds *Maximum position age* nothing is sent at
+all — exactly as if there were no fix. The status line turns red and reports the age.
+Transmission resumes by itself when the position updates again.
+
+Sources that publish no timestamp can't be judged and are treated as current. Set *Maximum
+position age* to `0` to disable the check entirely.
 
 ---
 

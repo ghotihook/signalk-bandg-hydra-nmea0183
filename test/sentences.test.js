@@ -127,19 +127,31 @@ test('bearings are integer degrees, coordinates are fixed width', async () => {
   } finally { close() }
 })
 
-test('a stale position is flagged invalid rather than sent as good', async () => {
+test('a stale position is not transmitted at all', async () => {
   // Signal K serves the last known position forever. A GPS that loses lock
-  // leaves a frozen fix that would otherwise go out as status A with a fresh
-  // timestamp, and the processor would navigate on it.
+  // leaves a frozen fix that would otherwise go out with a fresh timestamp,
+  // and the processor would navigate on it.
   const app = mockApp()
   app.state.data['navigation.position'].timestamp = new Date(Date.now() - 60000).toISOString()
 
   const { lines, close } = await capture(app, { maxPositionAge: 10 })
   try {
-    for (const line of lines) {
-      assert.equal(fields(line)[STATUS_FIELD[typeOf(line)]], 'V', `not flagged stale: ${line}`)
-    }
+    assert.equal(lines.length, 0, `transmitted on a stale fix: ${lines[0]}`)
     assert.match(app.state.error, /Position is 6\ds old/)
+  } finally { close() }
+})
+
+test('transmission resumes once the position is fresh again', async () => {
+  const app = mockApp()
+  app.state.data['navigation.position'].timestamp = new Date(Date.now() - 60000).toISOString()
+
+  const { lines, close } = await capture(app, { maxPositionAge: 10 })
+  try {
+    assert.equal(lines.length, 0)
+    app.state.data['navigation.position'].timestamp = new Date().toISOString()
+    await new Promise((r) => setTimeout(r, 300))
+    assert.ok(lines.length > 0, 'stayed silent after the fix recovered')
+    assert.equal(fields(lines.find((l) => typeOf(l) === 'NPRMC'))[STATUS_FIELD.NPRMC], 'A')
   } finally { close() }
 })
 
@@ -147,7 +159,7 @@ test('a fresh position is sent as valid', async () => {
   const app = mockApp()
   const { lines, close } = await capture(app, { maxPositionAge: 10 })
   try {
-    assert.equal(fields(lines.find((l) => typeOf(l) === 'NPRMC'))[2], 'A')
+    assert.equal(fields(lines.find((l) => typeOf(l) === 'NPRMC'))[STATUS_FIELD.NPRMC], 'A')
     assert.match(app.state.status, /^Active/)
   } finally { close() }
 })
@@ -158,7 +170,7 @@ test('the staleness check can be disabled', async () => {
 
   const { lines, close } = await capture(app, { maxPositionAge: 0 })
   try {
-    assert.equal(fields(lines.find((l) => typeOf(l) === 'NPRMC'))[2], 'A')
+    assert.equal(fields(lines.find((l) => typeOf(l) === 'NPRMC'))[STATUS_FIELD.NPRMC], 'A')
   } finally { close() }
 })
 
@@ -168,7 +180,7 @@ test('a source publishing no timestamp is treated as current', async () => {
 
   const { lines, close } = await capture(app)
   try {
-    assert.equal(fields(lines.find((l) => typeOf(l) === 'NPRMC'))[2], 'A')
+    assert.equal(fields(lines.find((l) => typeOf(l) === 'NPRMC'))[STATUS_FIELD.NPRMC], 'A')
   } finally { close() }
 })
 

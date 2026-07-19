@@ -105,9 +105,8 @@ module.exports = function (app) {
         type: 'number',
         title: 'Maximum position age (s)',
         description: 'Signal K keeps serving the last known position after a GPS drops out, with ' +
-                     'nothing to mark it stale. Past this age the sentences are still sent, but ' +
-                     'flagged invalid (status V) so the processor discards them instead of ' +
-                     'navigating on a frozen fix. 0 disables the check.',
+                     'nothing to mark it stale. Past this age nothing is sent at all, rather ' +
+                     'than letting the processor navigate on a frozen fix. 0 disables the check.',
         default: 10
       },
       sendRMC:       { type: 'boolean', title: 'Send RMC (position, SOG, COG, date, variation)', default: true },
@@ -256,26 +255,30 @@ module.exports = function (app) {
         return
       }
 
+      // Staleness. getSelfPath serves the last known position indefinitely — a
+      // GPS that loses lock or dies leaves a frozen fix in the data model, and
+      // transmitting it would have the processor navigate on a position of any
+      // age with no way to tell. Past maxAgeMs nothing is sent at all, exactly
+      // as if there were no fix. A source that publishes no timestamp cannot be
+      // judged, so it is treated as current.
+      const posAgeMs = posNode.timestamp != null
+        ? Date.now() - new Date(posNode.timestamp).getTime()
+        : null
+      if (maxAgeMs > 0 && posAgeMs != null && posAgeMs > maxAgeMs) {
+        const age = Math.round(posAgeMs / 1000)
+        diag(`position is ${age}s old (limit ${maxAgeMs / 1000}s) — transmitting nothing; ` +
+             `timestamp=${posNode.timestamp}`)
+        app.setPluginError(
+          `Position is ${age}s old (limit ${maxAgeMs / 1000}s) — nothing sent to ${dest}` +
+          (connected ? '' : ` (no link either${lastDrop ? `: ${lastDrop}` : ''})`)
+        )
+        return
+      }
+
       const [la, lh] = ddmm(position.latitude, true)
       const [lo, loh] = ddmm(position.longitude, false)
 
       const now = new Date()
-
-      // Staleness. getSelfPath serves the last known position indefinitely — a
-      // GPS that loses lock or dies leaves a frozen fix in the data model, and
-      // sending it with status 'A' and a fresh timestamp would have the
-      // processor navigate on it with no way to tell. Past maxAgeMs everything
-      // goes out flagged invalid instead. A source that publishes no timestamp
-      // can't be judged, so it is treated as current.
-      const posAgeMs = posNode.timestamp != null
-        ? now.getTime() - new Date(posNode.timestamp).getTime()
-        : null
-      const stale  = maxAgeMs > 0 && posAgeMs != null && posAgeMs > maxAgeMs
-      const status = stale ? 'V' : 'A'
-      if (stale) {
-        diag(`position is ${Math.round(posAgeMs / 1000)}s old (limit ${maxAgeMs / 1000}s) — ` +
-             `sending status V; timestamp=${posNode.timestamp}`)
-      }
 
       const hh = String(now.getUTCHours()).padStart(2, '0')
       const mm = String(now.getUTCMinutes()).padStart(2, '0')
@@ -314,7 +317,7 @@ module.exports = function (app) {
 
       let rmcSent = false
       if (sendRMC) {
-        const rmc = sentence(`NPRMC,${ts},${status},${la},${lh},${lo},${loh},${sogStr},${cogStr},${date},${varStr},${varHemi}`)
+        const rmc = sentence(`NPRMC,${ts},A,${la},${lh},${lo},${loh},${sogStr},${cogStr},${date},${varStr},${varHemi}`)
         send(rmc)
         app.debug(rmc)
         rmcSent = true
@@ -351,7 +354,7 @@ module.exports = function (app) {
           const brgStr  = deg3(brgRad)
           const vmgStr  = vmgMs != null ? (vmgMs * MS_TO_KN).toFixed(1) : ''
 
-          const rmb = sentence(`NPRMB,${status},${xteStr},${steer},${originId},${destId},${dla},${dlh},${dlo},${dloh},${distStr},${brgStr},${vmgStr},${arrived}`)
+          const rmb = sentence(`NPRMB,A,${xteStr},${steer},${originId},${destId},${dla},${dlh},${dlo},${dloh},${distStr},${brgStr},${vmgStr},${arrived}`)
           send(rmb)
           app.debug(rmb)
           wptSent = true
@@ -364,14 +367,14 @@ module.exports = function (app) {
           const trkUnit = trkMag != null ? 'M' : 'T'
           const trkStr  = deg3(trk)
           // arrival circle + arrival perpendicular (perpendicular approximated by the circle flag).
-          const apa = sentence(`NPAPA,${status},${status},${xteStr},${steer},N,${arrived},${arrived},${trkStr},${trkUnit},${destId}`)
+          const apa = sentence(`NPAPA,A,A,${xteStr},${steer},N,${arrived},${arrived},${trkStr},${trkUnit},${destId}`)
           send(apa)
           app.debug(apa)
         }
 
         // XTE — cross-track error only.
         if (sendXTE && xteM != null) {
-          const xte = sentence(`NPXTE,${status},${status},${xteStr},${steer},N`)
+          const xte = sentence(`NPXTE,A,A,${xteStr},${steer},N`)
           send(xte)
           app.debug(xte)
         }
@@ -382,17 +385,10 @@ module.exports = function (app) {
       // instrument received them is only knowable on TCP, via the link state.
       const f = (v) => v != null ? '✓' : '✗'
       const deps =
-        `pos${stale ? '⚠' : '✓'} cog${f(cogRad)} sog${f(sogMs)} var${f(varRad)} ` +
+        `pos✓ cog${f(cogRad)} sog${f(sogMs)} var${f(varRad)} ` +
         `rmc${rmcSent ? '✓' : '✗'} wpt${wptSent ? '✓' : '✗'}`
 
-      if (stale && connected) {
-        // Not an outage — the link is fine and sentences are still going out.
-        // But they carry status V, so the processor is ignoring them.
-        app.setPluginError(
-          `Position is ${Math.round(posAgeMs / 1000)}s old (limit ${maxAgeMs / 1000}s) — ` +
-          `sending status V to ${dest}, processor will discard | ${deps}`
-        )
-      } else if (connected) {
+      if (connected) {
         app.setPluginStatus(`Active →${dest} @ ${rateHz}Hz | ${deps}`)
       } else {
         app.setPluginError(
