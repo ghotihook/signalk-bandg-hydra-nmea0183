@@ -3,9 +3,13 @@
   "version": "0.1.0",
   "description": "Feeds position and navigation data into the NMEA 0183 input of older B&G H2000 processors (Hydra, Hercules), which only accept an outdated sentence format",
   "main": "index.js",
+  "scripts": {
+    "test": "node --test"
+  },
   "keywords": [
     "signalk-node-server-plugin",
     "signalk-category-nmea-0183",
+    "signalk-category-instruments",
     "signalk",
     "nmea0183",
     "nmea",
@@ -35,6 +39,7 @@
     "LICENSE"
   ],
   "engines": {
-    "node": ">=18"
+    "//": "Matches the SignalK ecosystem floor — Venus OS on the Cerbo GX ships Node 20.",
+    "node": ">=20.10"
   }
 }

@@ -420,3 +420,8 @@ module.exports = function (app) {
 
   return plugin
 }
+
+// Exported for the test suite only — the server never looks at these. The
+// formatting helpers are where the field-width bugs have historically been, so
+// they are worth testing directly rather than only through emitted sentences.
+module.exports._internal = { nmeaChecksum, sentence, ddmm, deg3, destFrom }

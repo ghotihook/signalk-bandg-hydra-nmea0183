@@ -1,5 +1,7 @@
 # signalk-bandg-hydra-nmea0183
 
+[![CI](https://github.com/ghotihook/signalk-bandg-hydra-nmea0183/actions/workflows/signalk-ci.yml/badge.svg)](https://github.com/ghotihook/signalk-bandg-hydra-nmea0183/actions/workflows/signalk-ci.yml)
+
 Signal K plugin that feeds position and navigation data into the **NMEA 0183 input** of older
 B&G processors — the H2000 series (Hydra, Hercules) and similar hardware of that era — over TCP
 or UDP.
@@ -179,6 +181,17 @@ sudo systemctl restart signalk
 # after changes
 git -C ~/signalk-bandg-hydra-nmea0183 pull && sudo systemctl restart signalk
 ```
+
+### Tests
+
+```bash
+npm test
+```
+
+No dependencies — the suite runs on the built-in Node test runner. It covers the field
+formatting (where every bug found so far has been) and drives the plugin end to end against a
+throwaway TCP listener, checking the emitted sentences against the field diagrams in the Hydra
+2000 manual.
 
 ---
 
