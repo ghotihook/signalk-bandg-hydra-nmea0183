@@ -1,0 +1,40 @@
+{
+  "name": "signalk-bandg-hydra-nmea0183",
+  "version": "0.1.0",
+  "description": "Feeds position and navigation data into the NMEA 0183 input of older B&G H2000 processors (Hydra, Hercules), which only accept an outdated sentence format",
+  "main": "index.js",
+  "keywords": [
+    "signalk-node-server-plugin",
+    "signalk-category-nmea-0183",
+    "signalk",
+    "nmea0183",
+    "nmea",
+    "legacy",
+    "bandg",
+    "b&g",
+    "hydra",
+    "h2000",
+    "h3000",
+    "hercules",
+    "autopilot",
+    "gps"
+  ],
+  "author": "ghotihook",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ghotihook/signalk-bandg-hydra-nmea0183.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ghotihook/signalk-bandg-hydra-nmea0183/issues"
+  },
+  "homepage": "https://github.com/ghotihook/signalk-bandg-hydra-nmea0183#readme",
+  "files": [
+    "index.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}
