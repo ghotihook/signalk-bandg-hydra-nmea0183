@@ -23,14 +23,29 @@ function sentence(body) {
 
 // Decimal degrees -> ddmm.mm / dddmm.mm + hemisphere letter.
 // 2 decimal minutes per the Hydra 2000 manual format (xxxx.xx / xxxxx.xx).
+//
+// Rounding happens once, to whole hundredths of a minute, *before* degrees and
+// minutes are separated. Splitting first and formatting the remainder with
+// toFixed(2) lets a minute value just under 60 round up to "60.00" and emit an
+// invalid coordinate (34° came out as 3360.00 rather than 3400.00).
 function ddmm(degrees, isLat) {
-  const hemi = isLat ? (degrees >= 0 ? 'N' : 'S') : (degrees >= 0 ? 'E' : 'W')
-  const ad   = Math.abs(degrees)
-  const d    = Math.floor(ad)
-  const m    = (ad - d) * 60
-  const deg  = String(d).padStart(isLat ? 2 : 3, '0')
-  const min  = m.toFixed(2).padStart(5, '0')
+  const hemi       = isLat ? (degrees >= 0 ? 'N' : 'S') : (degrees >= 0 ? 'E' : 'W')
+  const hundredths = Math.round(Math.abs(degrees) * 6000)  // 60 min x 100
+  const d          = Math.floor(hundredths / 6000)
+  const m          = (hundredths - d * 6000) / 100
+  const deg        = String(d).padStart(isLat ? 2 : 3, '0')
+  const min        = m.toFixed(2).padStart(5, '0')
   return [`${deg}${min}`, hemi]
+}
+
+// Bearings and courses -> integer degrees, zero-padded to 3, per the manual's
+// bare `xxx` fields (RMC COG, RMB bearing, APA/BOD track). Normalises into
+// 0-359 first, so an out-of-range input can't emit "0-3" or "360".
+// Note this is 1 degree of resolution: the manual has no decimal place here.
+function deg3(rad) {
+  if (rad == null) return ''
+  const d = Math.round(rad * RAD_TO_DEG)
+  return String(((d % 360) + 360) % 360).padStart(3, '0')
 }
 
 // Great-circle destination from a start point, bearing (rad) and distance (m).
@@ -76,7 +91,25 @@ module.exports = function (app) {
                      'for the operating system timeout (around two minutes) before retrying.',
         default: 5
       },
-      rateHz:        { type: 'number',  title: 'Transmit rate (Hz)',      default: 1 },
+      rateHz:        { type: 'number',  title: 'Transmit rate (Hz)', default: 1, minimum: 0.1, maximum: 10 },
+      waypointName: {
+        type: 'string',
+        title: 'Destination waypoint label',
+        description: 'RMB and APA carry a 4-character waypoint identifier. The v1 data model ' +
+                     'exposes waypoint hrefs rather than names, so there is no real name to send; ' +
+                     'this fixed label fills the field so the processor has something to parse ' +
+                     'and display. Clear it to leave the field empty.',
+        default: 'WPT'
+      },
+      maxPositionAge: {
+        type: 'number',
+        title: 'Maximum position age (s)',
+        description: 'Signal K keeps serving the last known position after a GPS drops out, with ' +
+                     'nothing to mark it stale. Past this age the sentences are still sent, but ' +
+                     'flagged invalid (status V) so the processor discards them instead of ' +
+                     'navigating on a frozen fix. 0 disables the check.',
+        default: 10
+      },
       sendRMC:       { type: 'boolean', title: 'Send RMC (position, SOG, COG, date, variation)', default: true },
       sendRMB:       { type: 'boolean', title: 'Send RMB (active waypoint navigation)', default: true },
       sendAPA:       { type: 'boolean', title: 'Send APA (autopilot format A)', default: true },
@@ -99,13 +132,25 @@ module.exports = function (app) {
     const host       = options.host || options.tcpAddress || '192.168.0.2'
     const port       = options.port || options.tcpPort    || 1183
     const isUdp      = options.transport === 'udp'
-    const rateHz     = options.rateHz     > 0 ? options.rateHz : 1
+    // Clamped: the schema bounds only guide the admin UI, and a hand-edited
+    // config with a huge rate would round the interval down to a busy-loop.
+    const rateHz     = Math.min(Math.max(options.rateHz > 0 ? options.rateHz : 1, 0.1), 10)
     const periodMs   = Math.round(1000 / rateHz)
     const sendRMC    = options.sendRMC !== false
     const sendRMB    = options.sendRMB !== false
     const sendAPA    = options.sendAPA !== false
     const sendXTE    = options.sendXTE !== false
     const arrivalR   = options.arrivalRadius > 0 ? options.arrivalRadius : 100
+    // 0 disables; undefined (config saved before this option existed) gets the default.
+    const maxAgeMs   = (options.maxPositionAge != null ? options.maxPositionAge : 10) * 1000
+
+    // Waypoint identifier fields. Stripped to plain alphanumerics and 4 chars:
+    // a comma or '*' from the config would otherwise split the sentence into
+    // bogus fields or truncate it at a false checksum delimiter. Origin is left
+    // blank — there is no meaningful label for it and the processor shows dest.
+    const destId   = String(options.waypointName != null ? options.waypointName : 'WPT')
+      .replace(/[^A-Za-z0-9]/g, '').slice(0, 4).toUpperCase()
+    const originId = ''
     const connTimeoutMs = (options.connectTimeout > 0 ? options.connectTimeout : 5) * 1000
 
     const dest = `${isUdp ? 'udp' : 'tcp'} ${host}:${port}`
@@ -197,7 +242,8 @@ module.exports = function (app) {
     }
 
     function transmit() {
-      const position = app.getSelfPath('navigation.position')?.value
+      const posNode  = app.getSelfPath('navigation.position')
+      const position = posNode?.value
       if (!position || position.latitude == null || position.longitude == null) {
         diag(`no position fix — navigation.position=${JSON.stringify(position)}; skipping transmit. ` +
              `cog=${JSON.stringify(app.getSelfPath('navigation.courseOverGroundTrue')?.value)} ` +
@@ -214,6 +260,23 @@ module.exports = function (app) {
       const [lo, loh] = ddmm(position.longitude, false)
 
       const now = new Date()
+
+      // Staleness. getSelfPath serves the last known position indefinitely — a
+      // GPS that loses lock or dies leaves a frozen fix in the data model, and
+      // sending it with status 'A' and a fresh timestamp would have the
+      // processor navigate on it with no way to tell. Past maxAgeMs everything
+      // goes out flagged invalid instead. A source that publishes no timestamp
+      // can't be judged, so it is treated as current.
+      const posAgeMs = posNode.timestamp != null
+        ? now.getTime() - new Date(posNode.timestamp).getTime()
+        : null
+      const stale  = maxAgeMs > 0 && posAgeMs != null && posAgeMs > maxAgeMs
+      const status = stale ? 'V' : 'A'
+      if (stale) {
+        diag(`position is ${Math.round(posAgeMs / 1000)}s old (limit ${maxAgeMs / 1000}s) — ` +
+             `sending status V; timestamp=${posNode.timestamp}`)
+      }
+
       const hh = String(now.getUTCHours()).padStart(2, '0')
       const mm = String(now.getUTCMinutes()).padStart(2, '0')
       const ss = String(now.getUTCSeconds()).padStart(2, '0')
@@ -232,8 +295,8 @@ module.exports = function (app) {
         }
       }
       const sogMs  = app.getSelfPath('navigation.speedOverGround')?.value
-      const cogStr = cogRad != null ? (cogRad * RAD_TO_DEG).toFixed(1) : ''
-      const sogStr = sogMs  != null ? (sogMs * MS_TO_KN).toFixed(1)   : ''
+      const cogStr = deg3(cogRad)
+      const sogStr = sogMs != null ? (sogMs * MS_TO_KN).toFixed(1) : ''
 
       // RMC — recommended minimum GPS data (position, SOG, COG, date, variation).
       // RMC already carries SOG (knots) and COG (true), so VTG is not sent.
@@ -242,12 +305,16 @@ module.exports = function (app) {
       const yy   = String(now.getUTCFullYear() % 100).padStart(2, '0')
       const date = `${dd}${mo}${yy}`
 
-      const varStr  = varRad != null ? Math.abs(varRad * RAD_TO_DEG).toFixed(1) : ''
+      // Variation is a bare `xx` in the manual — whole degrees, magnitude only,
+      // with the hemisphere carried in the following field.
+      const varStr  = varRad != null
+        ? String(Math.round(Math.abs(varRad * RAD_TO_DEG))).padStart(2, '0')
+        : ''
       const varHemi = varRad != null ? (varRad >= 0 ? 'E' : 'W') : ''
 
       let rmcSent = false
       if (sendRMC) {
-        const rmc = sentence(`NPRMC,${ts},A,${la},${lh},${lo},${loh},${sogStr},${cogStr},${date},${varStr},${varHemi}`)
+        const rmc = sentence(`NPRMC,${ts},${status},${la},${lh},${lo},${loh},${sogStr},${cogStr},${date},${varStr},${varHemi}`)
         send(rmc)
         app.debug(rmc)
         rmcSent = true
@@ -279,12 +346,12 @@ module.exports = function (app) {
           const [dLat, dLon] = destFrom(position.latitude, position.longitude, brgRad, distM)
           const [dla, dlh]   = ddmm(dLat, true)
           const [dlo, dloh]  = ddmm(dLon, false)
-          const distStr = (distM * M_TO_NM).toFixed(1)
-          const brgStr  = (brgRad * RAD_TO_DEG).toFixed(1)
+          // Range field is `xxx.x` — clamp rather than overflow it on a long leg.
+          const distStr = Math.min(distM * M_TO_NM, 999.9).toFixed(1)
+          const brgStr  = deg3(brgRad)
           const vmgStr  = vmgMs != null ? (vmgMs * MS_TO_KN).toFixed(1) : ''
 
-          // origin/dest waypoint ids left blank (SK exposes hrefs, not names).
-          const rmb = sentence(`NPRMB,A,${xteStr},${steer},,,${dla},${dlh},${dlo},${dloh},${distStr},${brgStr},${vmgStr},${arrived}`)
+          const rmb = sentence(`NPRMB,${status},${xteStr},${steer},${originId},${destId},${dla},${dlh},${dlo},${dloh},${distStr},${brgStr},${vmgStr},${arrived}`)
           send(rmb)
           app.debug(rmb)
           wptSent = true
@@ -295,16 +362,16 @@ module.exports = function (app) {
         if (sendAPA) {
           const trk     = trkMag != null ? trkMag : trkTrue
           const trkUnit = trkMag != null ? 'M' : 'T'
-          const trkStr  = trk != null ? String(Math.round(trk * RAD_TO_DEG) % 360).padStart(3, '0') : ''
+          const trkStr  = deg3(trk)
           // arrival circle + arrival perpendicular (perpendicular approximated by the circle flag).
-          const apa = sentence(`NPAPA,A,A,${xteStr},${steer},N,${arrived},${arrived},${trkStr},${trkUnit},`)
+          const apa = sentence(`NPAPA,${status},${status},${xteStr},${steer},N,${arrived},${arrived},${trkStr},${trkUnit},${destId}`)
           send(apa)
           app.debug(apa)
         }
 
         // XTE — cross-track error only.
         if (sendXTE && xteM != null) {
-          const xte = sentence(`NPXTE,A,A,${xteStr},${steer},N`)
+          const xte = sentence(`NPXTE,${status},${status},${xteStr},${steer},N`)
           send(xte)
           app.debug(xte)
         }
@@ -315,10 +382,17 @@ module.exports = function (app) {
       // instrument received them is only knowable on TCP, via the link state.
       const f = (v) => v != null ? '✓' : '✗'
       const deps =
-        `pos✓ cog${f(cogRad)} sog${f(sogMs)} var${f(varRad)} ` +
+        `pos${stale ? '⚠' : '✓'} cog${f(cogRad)} sog${f(sogMs)} var${f(varRad)} ` +
         `rmc${rmcSent ? '✓' : '✗'} wpt${wptSent ? '✓' : '✗'}`
 
-      if (connected) {
+      if (stale && connected) {
+        // Not an outage — the link is fine and sentences are still going out.
+        // But they carry status V, so the processor is ignoring them.
+        app.setPluginError(
+          `Position is ${Math.round(posAgeMs / 1000)}s old (limit ${maxAgeMs / 1000}s) — ` +
+          `sending status V to ${dest}, processor will discard | ${deps}`
+        )
+      } else if (connected) {
         app.setPluginStatus(`Active →${dest} @ ${rateHz}Hz | ${deps}`)
       } else {
         app.setPluginError(

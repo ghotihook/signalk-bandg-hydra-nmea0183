@@ -84,6 +84,8 @@ on the boat sees them.
 | Destination port | `1183` | Destination port |
 | TCP connect timeout (s) | `5` | TCP only. Stops a destination that silently drops packets from stalling for the OS timeout (~2 min) before retrying |
 | Transmit rate (Hz) | `1` | How often sentences are sent |
+| Maximum position age (s) | `10` | Past this age the fix is treated as stale and sentences go out flagged invalid (status `V`). `0` disables the check |
+| Destination waypoint label | `WPT` | Fills the 4-character waypoint identifier field in RMB and APA. Clear it to leave the field empty |
 | Send RMC | `true` | Position, SOG, COG, date, variation |
 | Send RMB | `true` | Active waypoint navigation |
 | Send APA | `true` | Autopilot format A |
@@ -118,10 +120,10 @@ use TCP if you need to know the instrument is really being fed.
 Enable debug logging in the admin UI to see each sentence as it goes out:
 
 ```
-$NPRMC,071142,A,3352.08,S,15114.03,E,6.1,45.2,160626,12.3,E*XX
-$NPRMB,A,0.02,L,,,3352.00,S,15113.00,E,1.2,48.0,5.9,V*XX
-$NPAPA,A,A,0.02,L,N,V,V,048,M,*XX
-$NPXTE,A,A,0.02,L,N*XX
+$NPRMC,071142,A,3352.08,S,15114.03,E,6.1,045,160626,12,E*5F
+$NPRMB,A,0.02,L,,WPT,3352.00,S,15113.00,E,1.2,048,5.9,V*6E
+$NPAPA,A,A,0.02,L,N,V,V,048,M,WPT*72
+$NPXTE,A,A,0.02,L,N*65
 ```
 
 ---
@@ -145,14 +147,25 @@ The output format follows the legacy `legacy_gps.py` processor.
 `calcValues.distance`, the waypoint lat/lon is derived rather than read directly, and the
 arrival radius is a plugin option instead of being taken from the arrival circle.
 
-**Coordinate precision is deliberately coarse.** Lat/lon are emitted as `ddmm.mm` (2 decimal
-minutes, ~18 m) to match the Hydra 2000 manual exactly, rather than the `ddmm.mmmm` that would
-be possible. *To revisit:* if your instrument accepts extended precision, `ddmm()` in
-`index.js` can go back to 4 decimal places for better resolution.
+**Precision is deliberately coarse, in two places.** Lat/lon are emitted as `ddmm.mm` (2 decimal
+minutes, ~18 m) and bearings as bare integer degrees (`045`, not `45.2`) — both to match the
+field widths in the Hydra 2000 manual exactly. The manual gives COG, RMB bearing, APA track and
+magnetic variation no decimal place at all, so 1° is the available resolution for those. *To
+revisit:* if your instrument accepts extended precision, `ddmm()` and `deg3()` in `index.js` are
+the two places to widen.
 
-**Check the steer direction against your pilot.** The RMB and APA steer direction (L/R) is
-derived from the sign of `crossTrackError`. Confirm against live data that it matches what your
-autopilot expects — it's a one-line sign flip in `index.js` if not.
+**Stale positions are flagged, not hidden.** Signal K serves the last known `navigation.position`
+indefinitely — if the GPS loses lock or its source dies, the data model keeps returning a frozen
+fix with nothing to mark it old. Sending that with status `A` would have the processor navigate
+on it. So the position's timestamp is checked each cycle, and once it exceeds *Maximum position
+age* the RMC, RMB, APA and XTE sentences are still sent but with status `V`, which tells the
+processor to discard them. The status line turns red and reports the age. Sources that publish no
+timestamp can't be judged and are treated as current.
+
+**Check the steer direction against your pilot.** The RMB and APA steer direction (L/R) follows
+the Signal K convention that a negative `crossTrackError` puts the vessel left of track — so
+positive means steer left. That matches the spec, but confirm it against live data before
+trusting it to steer: it's a one-line sign flip in `index.js` if your pilot disagrees.
 
 ---
 
