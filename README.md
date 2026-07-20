@@ -55,6 +55,10 @@ Two common ways to build that bridge:
 Check your processor's manual for the input's electrical standard — RS-422 differential is usual
 on kit of this era, and polarity matters — and for its baud rate. Standard NMEA 0183 is 4800.
 
+If your Signal K machine already has a serial port wired to the processor, the socat line above
+run locally is the whole bridge. Signal K could also drive that port directly, without a bridge
+at all — see [Roadmap](#roadmap) for why the plugin doesn't do that yet.
+
 ### The transmit rate has to fit the wire
 
 4800 baud carries about 480 characters per second. A full RMC + RMB + APA + XTE cycle is roughly
@@ -297,24 +301,39 @@ position age* to `0` to disable the check entirely.
 
 ## Roadmap
 
-**Emit through Signal K's own NMEA 0183 output rather than a private socket.** The server has
-output plumbing for this: a plugin calls `app.emit('nmea0183out', sentence)` and the sentence
-flows to whatever outputs the user has configured, instead of to a socket the plugin opened
-itself.
+**Emit to a Data Connection instead of opening a private socket.** Signal K already has the
+plumbing. A connection's **Output Events** field takes a list of event names; anything a plugin
+emits on one of those names is written to that connection. The plugin side is a single
+`app.emit(eventName, body)` — no socket, no reconnect logic.
 
-The gain is that the sentences could then be routed through any **pre-configured Data
-Connection** — including a serial port wired straight to the processor. For anyone whose Signal
-K machine is already physically connected to the H2000, that removes the bridge entirely, along
-with this plugin's socket handling, reconnect logic and link reporting.
+The gain is a **serial** Data Connection wired straight to the processor. For anyone whose
+Signal K machine is already physically connected to the H2000, that removes the bridge entirely,
+along with this plugin's socket handling, reconnect logic and link reporting.
 
-Two things to solve before that swap is worth making. The admin UI only exposes a TCP output for
-Data Connections, and the server applies validation to that output which has to be disabled by
-hand — awkward for sentences that are intentionally non-compliant, which is the whole point
-here. The shared output on port 10110 would also carry these sentences to everything else on the
-boat, where today they reach only the configured destination.
+Verified against `@signalk/streams` 6.8.0 and `@signalk/server-admin-ui` 2.30.0:
 
-Likely shape: keep the private socket as one transport option and add `nmea0183out` as another,
-rather than replacing one with the other.
+- **Serial works, and so do TCP and gpsd.** `serialport.js` and `tcp.js` both register listeners
+  for every name in `options.toStdout`, and the admin UI renders the Output Events field for
+  those three connection types.
+- **UDP does not.** `udp.js` has no `toStdout` handling at all — only an `outEvent` option the
+  server sets internally for specific device types (ydwg02, navlink2), never from user config.
+  The UI renders no Output Events field for UDP either. And the design wouldn't suit us anyway:
+  a UDP connection binds one port for input and sends to that *same* port, with the host
+  defaulting to broadcast. There is no Host field for UDP in the UI.
+- **Don't emit on `nmea0183out`.** That name is reserved — the built-in NMEA 0183 server
+  registers `app.on('nmea0183out', …)` unconditionally, so emitting on it would also push these
+  sentences to port 10110 and everything else on the boat. A configurable event name (defaulting
+  to something like `hydraOut`) reaches only the connection you wired it to.
+- **Emit the sentence without its terminator.** Every consumer appends `\r\n` itself, so the
+  emitted string must be the bare `$…*CS`.
+
+The real cost is diagnostics. `emit()` returns `false` when nothing is listening, which detects a
+missing or misnamed Output Events entry — but nothing beyond that. A serial port that has been
+unplugged, or a TCP peer that has gone away, is invisible to the emitter, and `tcp.js` silently
+drops writes when its buffer is full. Today the plugin reports real link state.
+
+So the likely shape is to keep the private socket as one transport option and add an emitted
+event as another, rather than replacing one with the other.
 
 ---
 
