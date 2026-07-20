@@ -10,7 +10,8 @@
   reference detail following.
 - Documented that a bridge is required between the plugin's TCP/UDP output and the
   processor's serial NMEA input, and the transmit rate a 4800-baud link can carry.
-- Documented what is sent against current NMEA 0183, field by field.
+- Replaced the sentence-by-sentence comparison against current NMEA 0183 with a worked example
+  of each sentence sent, annotated field by field.
 - Corrected the roadmap section on emitting to a Data Connection. Serial and gpsd outputs are
   supported as well as TCP, so the bridge-free serial path is open; UDP has no output-event
   support at all; and the claim that the server validates these outputs was wrong — there is no

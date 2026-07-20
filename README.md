@@ -158,98 +158,85 @@ $NPXTE,A,A,0.02,L,N*65
 RMC already carries SOG and COG, so VTG is not sent. Each sentence can be turned off
 individually.
 
-### What this sends, against current NMEA 0183
+### Examples
 
-The standard has grown fields since the H2000 was built. Each sentence below shows what this
-plugin sends, then the current form, with the added fields marked.
+A vessel south-east of Sydney, making 6.2 knots on a course of 045°, 1.2 nautical miles from a
+waypoint named `WPT` and 0.02 nm left of track.
 
-#### RMC — recommended minimum navigation data
-
-```
-we send   $NPRMC,221820,A,3352.08,S,15112.54,E,6.2,045,190726,12,E*5C
-current   $GPRMC,221820.00,A,3352.0800,S,15112.5400,E,6.2,45.2,190726,12.3,E,A,S*hh
-                                                                            ─┬─ ─┬─
-                                                                             1   2
-```
-
-11 fields sent, 13 in the current standard:
-
-| # | Added field | Values | Added in |
-|---|-------------|--------|----------|
-| 1 | Mode indicator | `A` autonomous, `D` differential, `E` estimated, `N` invalid | v2.3 |
-| 2 | Navigational status | `S` safe, `C` caution, `U` unsafe, `V` not valid | v4.1 |
-
-#### RMB — navigation to a waypoint
+**RMC** — position, time, date, SOG, COG, variation:
 
 ```
-we send   $NPRMB,A,0.02,L,,WPT,3352.00,S,15113.00,E,1.2,048,5.9,V*6E
-current   $GPRMB,A,0.02,L,,WPT,3352.0000,S,15113.0000,E,1.2,48.0,5.9,V,A*hh
-                                                                      ─┬─
-                                                                       1
+$NPRMC,221820,A,3352.08,S,15112.54,E,6.2,045,190726,12,E*5C
+       │      │ │       │ │        │ │   │   │      │  └ variation east
+       │      │ │       │ │        │ │   │   └ date, ddmmyy
+       │      │ │       │ │        │ │   └ COG true, degrees
+       │      │ │       │ │        │ └ SOG, knots
+       │      │ │       │ └────────┴ longitude, dddmm.mm
+       │      │ └───────┴ latitude, ddmm.mm
+       │      └ status: always A — nothing is sent without a valid fix
+       └ UTC, hhmmss
 ```
 
-13 fields sent, 14 in the current standard:
-
-| # | Added field | Values | Added in |
-|---|-------------|--------|----------|
-| 1 | Mode indicator | `A` / `D` / `E` / `N` | v2.3 |
-
-#### APA vs APB — autopilot
-
-This is the big one. APA was superseded by APB, which carries five more fields:
+**RMB** — navigation to the active waypoint:
 
 ```
-we send   $NPAPA,A,A,0.02,L,N,V,V,048,M,WPT*72
-current   $GPAPB,A,A,0.02,L,N,V,V,048,M,WPT,050,M,052,M,A*hh
-                                            ─┬─ ┬ ─┬─ ┬ ┬
-                                             1  2  3  4 5
+$NPRMB,A,0.02,L,,WPT,3352.00,S,15113.00,E,1.2,048,5.9,V*6E
+       │ │    │ ││   │       │ │        │ │   │   │   └ arrival flag
+       │ │    │ ││   │       │ │        │ │   │   └ VMG to waypoint, knots
+       │ │    │ ││   │       │ │        │ │   └ bearing to waypoint, degrees
+       │ │    │ ││   │       │ │        │ └ range to waypoint, nm
+       │ │    │ ││   │       │ └────────┴ waypoint longitude
+       │ │    │ ││   └───────┴ waypoint latitude
+       │ │    │ │└ destination waypoint ID
+       │ │    │ └ origin waypoint ID — left empty
+       │ │    └ steer left to regain track
+       │ └ cross-track error, nm
+       └ status
 ```
 
-10 fields sent, 15 in APB:
-
-| # | Added field | Meaning |
-|---|-------------|---------|
-| 1–2 | Bearing to destination, and its unit | Bearing from *present position* to the waypoint — APA only carries origin-to-destination |
-| 3–4 | Heading to steer, and its unit | The course the pilot should steer to close the track |
-| 5 | Mode indicator | `A` / `D` / `E` / `N`, added v2.3 |
-
-APA gives the pilot the track bearing and the cross-track error and leaves it to work out the
-correction itself. APB hands it the answer. Pilots of this era expect APA.
-
-#### XTE — cross-track error
+**APA** — autopilot, format A:
 
 ```
-we send   $NPXTE,A,A,0.02,L,N*65
-current   $GPXTE,A,A,0.02,L,N,A*hh
-                             ─┬─
-                              1
+$NPAPA,A,A,0.02,L,N,V,V,048,M,WPT*72
+       │ │ │    │ │ │ │ │   │ └ destination waypoint ID
+       │ │ │    │ │ │ │ │   └ magnetic
+       │ │ │    │ │ │ │ └ bearing from origin to destination
+       │ │ │    │ │ │ └ perpendicular passed
+       │ │ │    │ │ └ arrival circle entered
+       │ │ │    │ └ XTE units: nautical miles
+       │ │ │    └ steer left
+       │ │ └ cross-track error
+       │ └ loran-C cycle lock status
+       └ loran-C blink status
 ```
 
-5 fields sent, 6 in the current standard:
+**XTE** — cross-track error on its own:
 
-| # | Added field | Values | Added in |
-|---|-------------|--------|----------|
-| 1 | Mode indicator | `A` / `D` / `E` / `N` | v2.3 |
+```
+$NPXTE,A,A,0.02,L,N*65
+       │ │ │    │ └ nautical miles
+       │ │ │    └ steer left
+       │ │ └ cross-track error
+       │ └ cycle lock status
+       └ blink status
+```
 
-### Field formatting differences
+### Field formatting
 
-Beyond the extra fields, the values themselves are written differently:
+- **Talker ID is `NP`.** The manual's diagrams show a wildcard device identifier, so the
+  processor does not filter on it.
+- **Coordinates are `ddmm.mm`** — two decimal minutes, about 18 m. That is what the manual
+  specifies.
+- **Bearings and COG are bare integer degrees**, zero-padded to three digits (`045`). Magnetic
+  variation is two (`12`). The manual's fields have no decimal place.
+- **Time is `hhmmss`**, no fractional seconds.
+- **Decimal fields are not zero-padded** — `6.1`, not `06.1`. The manual writes SOG as `xx.x`,
+  which looks like a fixed width, but the processor accepts the natural form. Only coordinates
+  and bearings are padded.
 
-| | This plugin | Current standard | Why |
-|---|---|---|---|
-| Talker ID | `NP` | `GP`/`GN`, `II`, `EC` | The manual's diagrams show a wildcard device identifier, so the processor doesn't filter on it |
-| Latitude / longitude | `ddmm.mm` (~18 m) | `ddmm.mmmm` (~1.8 m) | The manual specifies 2 decimal minutes |
-| COG and bearings | `045` | `45.2` | The manual's `xxx` fields have no decimal place |
-| Magnetic variation | `12` | `12.3` | The manual's `xx` field |
-| Time | `221820` | `221820.00` | No fractional seconds in the manual |
-
-Decimal numeric fields are **not** zero-padded — `6.1`, not `06.1`. The manual writes SOG as
-`xx.x`, which looks like a fixed width, but the processor accepts the natural form. Only
-coordinates and bearings are padded to a fixed width.
-
-Every difference above is a deliberate downgrade. A parser from this era reads fields by
-position and stops at the count it expects, so a trailing mode indicator can be enough to make
-the whole sentence unusable.
+These are deliberate. A parser from this era reads fields by position and stops at the count it
+expects, so anything the manual does not list — an extra trailing field, a longer number — can
+be enough to make the whole sentence unusable.
 
 ---
 
