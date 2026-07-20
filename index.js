@@ -107,7 +107,7 @@ module.exports = function (app) {
         description: 'Signal K keeps serving the last known position after a GPS drops out, with ' +
                      'nothing to mark it stale. Past this age nothing is sent at all, rather ' +
                      'than letting the processor navigate on a frozen fix. 0 disables the check.',
-        default: 10
+        default: 5
       },
       sendRMC:       { type: 'boolean', title: 'Send RMC (position, SOG, COG, date, variation)', default: true },
       sendRMB:       { type: 'boolean', title: 'Send RMB (active waypoint navigation)', default: true },
@@ -141,7 +141,7 @@ module.exports = function (app) {
     const sendXTE    = options.sendXTE !== false
     const arrivalR   = options.arrivalRadius > 0 ? options.arrivalRadius : 100
     // 0 disables; undefined (config saved before this option existed) gets the default.
-    const maxAgeMs   = (options.maxPositionAge != null ? options.maxPositionAge : 10) * 1000
+    const maxAgeMs   = (options.maxPositionAge != null ? options.maxPositionAge : 5) * 1000
 
     // Waypoint identifier fields. Stripped to plain alphanumerics and 4 chars:
     // a comma or '*' from the config would otherwise split the sentence into

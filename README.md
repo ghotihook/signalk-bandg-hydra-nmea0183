@@ -83,7 +83,7 @@ transmit rate is the first thing to reduce.
 | Destination port | `1183` | Destination port |
 | TCP connect timeout (s) | `5` | TCP only. Stops a destination that silently drops packets from stalling for the OS timeout (~2 min) before retrying |
 | Transmit rate (Hz) | `1` | How often sentences are sent |
-| Maximum position age (s) | `10` | Past this age the fix is treated as stale and nothing is sent at all. `0` disables the check |
+| Maximum position age (s) | `5` | Past this age the fix is treated as stale and nothing is sent at all. `0` disables the check |
 | Destination waypoint label | `WPT` | Fills the 4-character waypoint identifier field in RMB and APA. Clear it to leave the field empty |
 | Send RMC | `true` | Position, SOG, COG, date, variation |
 | Send RMB | `true` | Active waypoint navigation |

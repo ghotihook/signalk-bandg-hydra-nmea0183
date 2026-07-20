@@ -5,6 +5,7 @@
 - A stale position now stops transmission entirely rather than being sent flagged
   invalid. Past *Maximum position age* nothing goes out at all, as if there were no
   fix; transmission resumes when the position updates.
+- *Maximum position age* default lowered from 10 s to 5 s.
 - README restructured to lead with what the plugin is and a quick start, with
   reference detail following.
 - Documented that a bridge is required between the plugin's TCP/UDP output and the
