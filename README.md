@@ -156,32 +156,96 @@ individually.
 
 ### What this sends, against current NMEA 0183
 
-The same fix, as this plugin emits it and as a modern compliant talker would:
+The standard has grown fields since the H2000 was built. Each sentence below shows what this
+plugin sends, then the current form, with the added fields marked.
+
+#### RMC — recommended minimum navigation data
 
 ```
-this plugin  $NPRMC,221820,A,3352.08,S,15112.54,E,6.2,045,190726,12,E*5C
-current      $GPRMC,221820.00,A,3352.0800,S,15112.5400,E,6.2,45.2,190726,12.3,E,A*hh
+we send   $NPRMC,221820,A,3352.08,S,15112.54,E,6.2,045,190726,12,E*5C
+current   $GPRMC,221820.00,A,3352.0800,S,15112.5400,E,6.2,45.2,190726,12.3,E,A,S*hh
+                                                                            ─┬─ ─┬─
+                                                                             1   2
 ```
 
-Field by field:
+11 fields sent, 13 in the current standard:
 
-| | This plugin | Current standard | Why it differs |
+| # | Added field | Values | Added in |
+|---|-------------|--------|----------|
+| 1 | Mode indicator | `A` autonomous, `D` differential, `E` estimated, `N` invalid | v2.3 |
+| 2 | Navigational status | `S` safe, `C` caution, `U` unsafe, `V` not valid | v4.1 |
+
+#### RMB — navigation to a waypoint
+
+```
+we send   $NPRMB,A,0.02,L,,WPT,3352.00,S,15113.00,E,1.2,048,5.9,V*6E
+current   $GPRMB,A,0.02,L,,WPT,3352.0000,S,15113.0000,E,1.2,48.0,5.9,V,A*hh
+                                                                      ─┬─
+                                                                       1
+```
+
+13 fields sent, 14 in the current standard:
+
+| # | Added field | Values | Added in |
+|---|-------------|--------|----------|
+| 1 | Mode indicator | `A` / `D` / `E` / `N` | v2.3 |
+
+#### APA vs APB — autopilot
+
+This is the big one. APA was superseded by APB, which carries five more fields:
+
+```
+we send   $NPAPA,A,A,0.02,L,N,V,V,048,M,WPT*72
+current   $GPAPB,A,A,0.02,L,N,V,V,048,M,WPT,050,M,052,M,A*hh
+                                            ─┬─ ┬ ─┬─ ┬ ┬
+                                             1  2  3  4 5
+```
+
+10 fields sent, 15 in APB:
+
+| # | Added field | Meaning |
+|---|-------------|---------|
+| 1–2 | Bearing to destination, and its unit | Bearing from *present position* to the waypoint — APA only carries origin-to-destination |
+| 3–4 | Heading to steer, and its unit | The course the pilot should steer to close the track |
+| 5 | Mode indicator | `A` / `D` / `E` / `N`, added v2.3 |
+
+APA gives the pilot the track bearing and the cross-track error and leaves it to work out the
+correction itself. APB hands it the answer. Pilots of this era expect APA.
+
+#### XTE — cross-track error
+
+```
+we send   $NPXTE,A,A,0.02,L,N*65
+current   $GPXTE,A,A,0.02,L,N,A*hh
+                             ─┬─
+                              1
+```
+
+5 fields sent, 6 in the current standard:
+
+| # | Added field | Values | Added in |
+|---|-------------|--------|----------|
+| 1 | Mode indicator | `A` / `D` / `E` / `N` | v2.3 |
+
+### Field formatting differences
+
+Beyond the extra fields, the values themselves are written differently:
+
+| | This plugin | Current standard | Why |
 |---|---|---|---|
 | Talker ID | `NP` | `GP`/`GN`, `II`, `EC` | The manual's diagrams show a wildcard device identifier, so the processor doesn't filter on it |
 | Latitude / longitude | `ddmm.mm` (~18 m) | `ddmm.mmmm` (~1.8 m) | The manual specifies 2 decimal minutes |
 | COG and bearings | `045` | `45.2` | The manual's `xxx` fields have no decimal place |
 | Magnetic variation | `12` | `12.3` | The manual's `xx` field |
 | Time | `221820` | `221820.00` | No fractional seconds in the manual |
-| Mode indicator | absent | `A`/`D`/`E`/`N` on RMC, RMB, XTE | Introduced in NMEA 0183 v2.3; the H2000 predates it and treats the extra field as a malformed sentence |
-| Navigational status | absent | `S`/`C`/`U`/`V` on RMC | Introduced in v4.1 |
-| Autopilot sentence | APA | APB | APA was superseded; pilots of this era expect APA |
 
 Decimal numeric fields are **not** zero-padded — `6.1`, not `06.1`. The manual writes SOG as
 `xx.x`, which looks like a fixed width, but the processor accepts the natural form. Only
 coordinates and bearings are padded to a fixed width.
 
-Every difference above is a deliberate downgrade. Sending the modern form of any of these is
-what makes the processor ignore the sentence.
+Every difference above is a deliberate downgrade. A parser from this era reads fields by
+position and stops at the count it expects, so a trailing mode indicator can be enough to make
+the whole sentence unusable.
 
 ---
 
